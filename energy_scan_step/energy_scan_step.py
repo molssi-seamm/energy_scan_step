@@ -32,8 +32,8 @@ class EnergyScanStep(object):
     """
 
     my_description = {
-        "description": "An interface for Energy Scan",
-        "group": "Simulations",
+        "description": "An interface for calculating the energy along coordinate(s).",
+        "group": "Properties",
         "name": "Energy Scan",
     }
 

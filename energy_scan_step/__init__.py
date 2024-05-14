@@ -8,11 +8,12 @@ A SEAMM plug-in for calculating energy profiles along coordinates
 # Bring up the classes so that they appear to be directly in
 # the energy_scan_step package.
 
-from .energy_scan import EnergyScan  # noqa: F401, E501
-from .energy_scan_step import EnergyScanStep  # noqa: F401, E501
-from .tk_energy_scan import TkEnergyScan  # noqa: F401, E501
+from .energy_scan import EnergyScan
+from .energy_scan_parameters import EnergyScanParameters
+from .energy_scan_step import EnergyScanStep
+from .tk_energy_scan import TkEnergyScan
 
-from .metadata import metadata  # noqa: F401
+from .metadata import metadata
 
 # Handle versioneer
 from ._version import get_versions
