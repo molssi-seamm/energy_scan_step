@@ -4,3 +4,4 @@ rdkit
 seamm
 seamm-util
 seamm-widgets
+tabulate
