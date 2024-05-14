@@ -11,6 +11,10 @@ dependencies:
   # SEAMM
   - seamm
 
+  - geometric
+  - numpy
+  - rdkit
+
   # Testing
   - black
   - codecov

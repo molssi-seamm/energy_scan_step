@@ -1,3 +1,6 @@
+geometric
+numpy
+rdkit
 seamm
 seamm-util
 seamm-widgets
