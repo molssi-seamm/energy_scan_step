@@ -29,6 +29,8 @@ dependencies:
 
   # Pip-only installs
   - pip:
+    - read-structure-step
+    
     # Documentation
     - sphinx-copybutton
     - sphinxnotes-strike

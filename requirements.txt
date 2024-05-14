@@ -1,6 +1,7 @@
 geometric
 numpy
 rdkit
+read-structure-step
 seamm
 seamm-util
 seamm-widgets
