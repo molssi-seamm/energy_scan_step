@@ -686,18 +686,20 @@ class EnergyScan(seamm.Node):
 
         data = self.setup_constraints(rdkConf)
 
-        print("Data from setup_constraints")
-        pprint.pprint(data)
+        logger.debug("Data from setup_constraints")
+        logger.debug(pprint.pformat(data))
 
         current = {}
         scans = [scan for scan in data["scans"]]
-        for scan in scans:
-            current[scan] = 0
+        current = {scan: 0 for scan in scans}
+        sorted_points = [sorted(data["scans"][scan]["points"]) for scan in scans]
 
-        all_configurations = []
-        all_energies = []
-        scan_configurations = []
-        scan_energies = []
+        # Setup a table for printing the results
+        table = {scan: [] for scan in scans}
+        table["Steps"] = []
+        table["Energy"] = []
+
+        all_data = {}
 
         # Loop over all the scans, incrementing each in turn
         finished = False
@@ -719,6 +721,7 @@ class EnergyScan(seamm.Node):
             rdkConf = rdkMol.GetConformers()[0]
 
             label = []
+            pts = []
             constraint_text = []
             constraint_text.append("$freeze")
             for scan in scans:
@@ -726,10 +729,12 @@ class EnergyScan(seamm.Node):
                 _atoms = data["scans"][scan]["atoms"]
                 _point = data["scans"][scan]["points"][current[scan]]
 
+                pts.append(_point)
                 self.logger.info(
                     f"{_point=}  {data['scans'][scan]['points']} {current[scan]}"
                 )
                 label.append(f"{scan} {_point}")
+                table[scan].append(_point)
 
                 atom_string = " ".join([str(at + 1) for at in _atoms])
                 constraint_text.append(f"{_type} {atom_string}")
@@ -747,13 +752,41 @@ class EnergyScan(seamm.Node):
                     rdkit.Chem.rdMolTransforms.SetDihedralDeg(
                         rdkConf, iat, jat, kat, lat, _point
                     )
+            for frozen in data["freeze"].keys():
+                _type = data["freeze"][frozen]["type"]
+                _atoms = data["freeze"][frozen]["atoms"]
+                _value = data["freeze"][frozen]["value"]
+
+                self.logger.info(f" freeze{_value=}")
+
+                atom_string = " ".join([str(at + 1) for at in _atoms])
+                constraint_text.append(f"{_type} {atom_string}")
+
+                if _value != "current":
+                    if _type == "distance":
+                        iat, jat = _atoms
+                        rdkit.Chem.rdMolTransforms.SetBondLength(
+                            rdkConf, iat, jat, _value
+                        )
+                    elif _type == "angle":
+                        iat, jat, kat = _atoms
+                        rdkit.Chem.rdMolTransforms.SetAngleDeg(
+                            rdkConf, iat, jat, kat, _value
+                        )
+                    elif _type == "dihedral":
+                        iat, jat, kat, lat = _atoms
+                        rdkit.Chem.rdMolTransforms.SetDihedralDeg(
+                            rdkConf, iat, jat, kat, lat, _value
+                        )
 
             self._working_directory = directory / "__".join(label)
             self.working_directory.mkdir(parents=True, exist_ok=True)
 
-            label = " : ".join(label)
+            label = " @ ".join(label)
 
             # Create a new configuration for this scan
+            # closest = self._find_closest_configuration(pts, sorted_points, all_data)
+
             _, self._working_configuration = self.get_system_configuration(
                 P={
                     "structure handling": "Create a new configuration",
@@ -859,14 +892,8 @@ format=%(message)s
                     **kwargs,
                 )
 
-            text = f"Scan finished after {self.step} steps/calculations."
-            printer.important(__(text, indent=self.indent + 4 * " "))
-
             # Get the optimized energy & geometry
             energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
-
-            print(f"    Energy = {energy:.2f}")
-
             coordinates = m.xyzs[-1].reshape(-1, 3)
 
             if self.logger.isEnabledFor(logging.DEBUG):
@@ -882,10 +909,32 @@ format=%(message)s
                 coordinates, fractionals=False
             )
 
-            all_configurations.append(self.working_configuration)
-            all_energies.append(energy)
-            scan_configurations.append(self.working_configuration)
-            scan_energies.append(energy)
+            all_data[tuple(pts)] = {
+                "energy": energy,
+                "geometry": self.working_configuration,
+                "label": label,
+            }
+
+            table["Steps"].append(self.step)
+            table["Energy"].append(f"{energy:.6f}")
+
+            tmp = tabulate(
+                table,
+                headers="keys",
+                tablefmt="simple_outline",
+                disable_numparse=False,
+            )
+            if len(table["Energy"]) == 1:
+                length = len(tmp.splitlines()[0])
+                text = ["\n" + 8 * " " + "Scans".center(length)]
+                for line in tmp.splitlines()[:-1]:
+                    text.append(8 * " " + line)
+                text = "\n".join(text)
+            else:
+                text = 8 * " " + tmp.splitlines()[-2]
+            footer = 8 * " " + tmp.splitlines()[-1] + "\n"
+
+            printer.important(text)
 
             if self.logger.isEnabledFor(logging.DEBUG):
                 print("step optimized coordinates")
@@ -908,20 +957,6 @@ format=%(message)s
                     self.logger.info(f"{current[scan]=}")
                     break
                 else:
-                    # Finished a scan. Save results
-                    energies = np.array(scan_energies)
-                    energies -= np.min(energies)
-                    energies = energies.tolist()
-                    print(f"{energies=}")
-
-                    points = data["scans"][scan]["points"]
-                    self._create_energy_graph(scan, _type, points, energies)
-
-                    self._create_sdf(scan, energies, scan_configurations)
-
-                    scan_configurations = []
-                    scan_energies = []
-
                     # Progress to next scan
                     current[scan] = 0
                     self.logger.info(f"{current[scan]=}")
@@ -930,6 +965,27 @@ format=%(message)s
                         finished = True
                         break
                 self.logger.info("")
+
+        printer.important(footer)
+
+        # Output all the tables and graphs
+        # Sort the points ...
+        all_points = [*all_data.keys()]
+        all_points.sort()
+        energies = np.array([all_data[pt]["energy"] for pt in all_points])
+        energies -= np.min(energies)
+
+        n_points = [len(pts) for pts in sorted_points]
+
+        energies.shape = n_points
+        energies = energies.round(decimals=2).tolist()
+        logger.debug(pprint.pformat(energies))
+
+        types = [data["scans"][scan]["type"] for scan in scans]
+        self._create_energy_graph(scans, types, sorted_points, energies)
+
+        scan_configurations = [all_data[pt]["geometry"] for pt in all_points]
+        self._create_sdf(scan_configurations)
 
         return next_node
 
@@ -965,31 +1021,55 @@ format=%(message)s
         rdkConf : rdkit.Conformer()
             The RDKit conformer corresponding to the current conformer.
         """
-        print("\n------------------ self.constriants -----------------\n")
-        pprint.pprint(self.constraints)
+        logger.debug("\n------------------ self.constriants -----------------\n")
+        logger.debug(pprint.pformat(self.constraints))
 
         result = {}
         scan_data = result["scans"] = {}
+        freeze_data = result["freeze"] = {}
+        set_data = result["set"] = {}
 
         # Handle the types of constraints
         for _type in ("distances", "angles", "dihedrals"):
             type_data = self.constraints[_type]
 
-            print(f"\n------------------ {_type[0:-1]} constraints -------------\n")
-            pprint.pprint(type_data)
+            logger.debug(
+                f"\n------------------ {_type[0:-1]} constraints -------------\n"
+                + pprint.pformat(type_data)
+            )
 
-            if "key atoms" in type_data and len(type_data["key atoms"]) > 0:
-                constraints = type_data["constraints"]
+            if "key atoms" not in type_data or len(type_data["key atoms"]) == 0:
+                continue
 
-                # find the current values of all the possibilities
+            constraints = type_data["constraints"]
+
+            # find the current values of all the possibilities
+            counts = {}
+            for name in constraints:
+                counts[name] = 0
                 for key, key_data in type_data["key atoms"].items():
+                    found = False
+                    for tmp, match_no in key_data:
+                        if tmp == name:
+                            found = True
+                            break
+                    if not found:
+                        continue
+
+                    counts[name] += 1
+                    count = counts[name]
+
                     values = []
-                    for name, match_no in key_data:
+                    indices = []
+                    for tmp, match_no in key_data:
+                        if tmp != name:
+                            continue
+                        indices.append(match_no)
                         data = constraints[name]
                         if _type == "distances":
                             i, j = data["atoms"][match_no]
                             r = rdkit.Chem.rdMolTransforms.GetBondLength(rdkConf, i, j)
-                            print(f"{r=}")
+                            logger.debug(f"{r=}")
                             values.append(r)
                             factor = Q_(1.0, data["units"]).m_as("Å")
                         elif _type == "angles":
@@ -997,7 +1077,7 @@ format=%(message)s
                             theta = rdkit.Chem.rdMolTransforms.GetAngleDeg(
                                 rdkConf, i, j, k
                             )
-                            print(f"{theta=}")
+                            logger.debug(f"{theta=}")
                             values.append(theta)
                             factor = Q_(1.0, data["units"]).m_as("degree")
                         elif _type == "dihedrals":
@@ -1005,31 +1085,104 @@ format=%(message)s
                             phi = rdkit.Chem.rdMolTransforms.GetDihedralDeg(
                                 rdkConf, i, j, k, lat
                             )
-                            print(f"{phi=}")
+                            logger.debug(f"{phi=}")
                             values.append(phi)
                             factor = Q_(1.0, data["units"]).m_as("degree")
 
-                    # needs more code here! This is just picking the last one
-                    atoms = data["atoms"][match_no]
+                    if len(values) == 0:
+                        continue
+
+                    if data["which"] == "all":
+                        pass
+                    elif data["which"] == "first":
+                        if count > 1:
+                            break
+                    else:
+                        if count != int(data["which"]):
+                            continue
 
                     if data["operation"] == "scan":
                         # Get the individual points in Angstrom
                         points = [
                             round(factor * v, 6) for v in parse_list(data["values"])
                         ]
-                        print(f"{points=}")
-                        string = " ".join([str(x + 1) for x in atoms])
-                        print(f"{string=}")
 
-                        scan_data[name] = {
+                        # Work out an order for the points
+                        if data["direction"] == "increasing":
+                            points = sorted(points)
+
+                            # Find instance closest to first point
+                            tmp = np.abs(np.array(values) - points[0])
+                            index = tmp.argmin()
+                            closest = tmp.min()
+                        elif data["direction"] == "decreasing":
+                            points = sorted(points, reverse=True)
+
+                            # Find instance closest to first point
+                            tmp = np.abs(np.array(values) - points[0])
+                            index = tmp.argmin()
+                            closest = tmp.min()
+                        else:
+                            # Start as close as possible to current value
+                            closest = None
+                            index = None
+                            for i, v in enumerate(values):
+                                tmp = np.abs(np.array(points) - v)
+                                if closest is None or tmp.min() < closest:
+                                    pt = tmp.argmin()
+                                    closest = tmp.min()
+                                    index = i
+                            points = points[pt:] + points[pt - 1 :: -1]
+
+                        atoms = data["atoms"][indices[index]]
+
+                        logger.debug(
+                            f"{name}#{count} -- {index} --> {indices[index]} {closest}"
+                        )
+                        logger.debug(f"{points=}")
+                        string = " ".join([str(x + 1) for x in atoms])
+                        logger.debug(f"{string=}")
+
+                        scan_data[f"{name}#{count}"] = {
                             "type": _type[0:-1],
-                            "atoms": data["atoms"][0],
-                            "points": points,
+                            "atoms": [*atoms],
+                            "points": [*points],
                         }
+                        logger.debug(f"Scan data for {name}#{count}:")
+                        logger.debug(pprint.pformat(scan_data[f"{name}#{count}"]))
+                        logger.debug("")
                     elif data["operation"] == "set":
-                        pass
+                        # Find instance closest to first point
+                        tmp = np.abs(np.array(values) - data["values"])
+                        index = tmp.argmin()
+                        closest = tmp.min()
+
+                        logger.debug(f"{name}#{count=} -- {index} {closest}")
+                        logger.debug(f"{data['values']=}")
+                        string = " ".join([str(x + 1) for x in atoms])
+                        logger.debug(f"{string=}")
+
+                        set_data[f"{name}#{count}"] = {
+                            "type": _type[0:-1],
+                            "atoms": data["atoms"][index],
+                            "value": data["values"],
+                        }
                     elif data["operation"] == "freeze":
-                        pass
+                        # Find instance closest to first point
+                        tmp = np.abs(np.array(values) - data["values"])
+                        index = tmp.argmin()
+                        closest = tmp.min()
+
+                        logger.debug(f"{name}#{count=} -- {index} {closest}")
+                        logger.debug(f"{data['values']=}")
+                        string = " ".join([str(x + 1) for x in atoms])
+                        logger.debug(f"{string=}")
+
+                        freeze_data[name] = {
+                            "type": _type[0:-1],
+                            "atoms": data["atoms"][index],
+                            "value": data["values"],
+                        }
                     else:
                         operation = data["operation"]
                         raise RuntimeError(
@@ -1038,78 +1191,145 @@ format=%(message)s
 
         return result
 
-    def _create_energy_graph(self, scan, _type, points, energies):
+    def _create_energy_graph(self, scans, types, points, energies):
         """Create a simple xy plot of the energy along a scan.
 
         Parameters
         ----------
-        points : [float]
-            The points along the x-axis
+        points : [(float,...)]
+            The points along the axes
         energies : [float]
             The energies at each point
         """
+        n_dimensions = len(points)
+
         # Create graphs of the property
-        figure = self.create_figure(
-            module_path=(self.__module__.split(".")[0], "seamm"),
-            template="line.graph_template",
-            title=scan,
-        )
 
-        name = scan.replace(" ", "_")
-        plot = figure.add_plot(name)
+        if n_dimensions == 1:
+            scan = scans[0]
+            _type = types[0]
+            pts = points[0]
 
-        if _type == "distance":
-            xlabel = "R (Å)"
-            xunits = "Å"
-        elif _type == "angle":
-            xlabel = "\N{Mathematical Italic Theta Symbol} (º)"
-            xunits = "º"
+            figure = self.create_figure(
+                module_path=(self.__module__.split(".")[0], "seamm"),
+                template="line.graph_template",
+                title=scan,
+            )
+            name = scan.replace(" ", "_")
+            plot = figure.add_plot(name)
+
+            if _type == "distance":
+                xlabel = "R (Å)"
+                xunits = "Å"
+            elif _type == "angle":
+                xlabel = "\N{Mathematical Italic Theta Symbol} (º)"
+                xunits = "º"
+            else:
+                xlabel = "\N{Mathematical Italic Phi Symbol} (º)"
+                xunits = "º"
+
+            x_axis = plot.add_axis("x", label=xlabel)
+            y_axis = plot.add_axis("y", label="Energy (kJ/mol)", anchor=x_axis)
+            x_axis.anchor = y_axis
+
+            plot.add_trace(
+                x_axis=x_axis,
+                y_axis=y_axis,
+                name=scan,
+                x=pts,
+                xlabel=xlabel,
+                xunits=xunits,
+                y=energies,
+                ylabel="E",
+                yunits="kJ/mol",
+            )
+        elif n_dimensions == 2:
+            figure = self.create_figure(
+                module_path=(self.__module__.split(".")[0], "seamm"),
+                template="surface.graph_template",
+                title="Energy Scan",
+            )
+            name = "EnergyScan"
+            plot = figure.add_plot(name)
+
+            # X axis
+            scan = scans[0]
+            _type = types[0]
+            if _type == "distance":
+                xlabel = f"R {scan} (Å)"
+                xunits = "Å"
+            elif _type == "angle":
+                xlabel = f"\N{Mathematical Italic Theta Symbol} {scan} (º)"
+                xunits = "º"
+            else:
+                xlabel = f"\N{Mathematical Italic Phi Symbol} {scan} (º)"
+                xunits = "º"
+
+            x_axis = plot.add_axis("x", label=xlabel)
+
+            # Y axis
+            scan = scans[1]
+            _type = types[1]
+            if _type == "distance":
+                ylabel = f"R {scan} (Å)"
+                yunits = "Å"
+            elif _type == "angle":
+                ylabel = f"\N{Mathematical Italic Theta Symbol} {scan} (º)"
+                yunits = "º"
+            else:
+                ylabel = f"\N{Mathematical Italic Phi Symbol} {scan} (º)"
+                yunits = "º"
+
+            y_axis = plot.add_axis("y", label=ylabel)
+            x_axis.anchor = y_axis
+
+            z_axis = plot.add_axis("z", label="Energy (kJ/mol)", anchor=x_axis)
+
+            plot.add_trace(
+                x_axis=x_axis,
+                y_axis=y_axis,
+                z_axis=z_axis,
+                name=scan,
+                x=points[0],
+                xlabel=xlabel,
+                xunits=xunits,
+                y=points[1],
+                ylabel=ylabel,
+                yunits=yunits,
+                z=energies,
+                zlabel="E",
+                zunits="kJ/mol",
+            )
         else:
-            xlabel = "\N{Mathematical Italic Phi Symbol} (º)"
-            xunits = "º"
-
-        x_axis = plot.add_axis("x", label=xlabel)
-        y_axis = plot.add_axis("y", label="Energy (kJ/mol)", anchor=x_axis)
-        x_axis.anchor = y_axis
-
-        plot.add_trace(
-            x_axis=x_axis,
-            y_axis=y_axis,
-            name=scan,
-            x=points,
-            xlabel=xlabel,
-            xunits=xunits,
-            y=energies,
-            ylabel="E",
-            yunits="kJ/mol",
-        )
+            raise NotImplementedError("can't graph more than 2 dimensions")
 
         figure.grid_plots(name)
 
         node_path = Path(self.directory)
         node_path.mkdir(parents=True, exist_ok=True)
-        path = node_path / f"{scan}.graph"
+        path = node_path / "EnergyScan.graph"
 
         figure.dump(path)
 
         write_html = True
         if write_html:
-            figure.template = "line.html_template"
+            if n_dimensions == 1:
+                figure.template = "line.html_template"
+            elif n_dimensions == 2:
+                figure.template = "surface.html_template"
+
             figure.dump(path.with_suffix(".html"))
 
-    def _create_sdf(self, scan, energies, configurations):
+    def _create_sdf(self, configurations):
         """Write the configurations to an SDF file.
 
         Parameters
         ----------
-        energies : [float]
-            Relative energies in kJ/mol.
-
         configurations : molsystem._Configuration
             The configurations to write.
         """
         read_structure_step.write(
-            str(Path(self.directory) / f"{scan}.sdf"),
+            str(Path(self.directory) / "EnergyScan.sdf"),
             configurations,
             extension=".sdf",
             remove_hydrogens=False,
@@ -1117,3 +1337,29 @@ format=%(message)s
             references=self.references,
             bibliography=self._bibliography,
         )
+
+    def _find_closest_configuration(self, pts, all_points, all_data):
+        """Return the "closest" configuration to the given points.
+
+        This is used to get the point in the scans that is closest to the
+        current point, so that the configuration can be used as the starting
+        cofiguration for the next calculation.
+
+        Parameters
+        ----------
+        pts : [float]
+            The points to find the closest configuration to.
+
+        all_points : [[float], ...]
+            The total set of points, sorted, with one list per scan direction.
+
+        all_data : {(pts,...): {str: any}}
+            The data from the calculations so far.
+
+        Returns
+        -------
+        pts : (pts...)
+            The tuple of the closest point.
+        """
+        if len(all_points) == 0:
+            return None
