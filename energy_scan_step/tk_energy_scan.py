@@ -410,11 +410,11 @@ class TkEnergyScan(seamm.TkNode):
         self._new["operation"].set("scan")
         self._new["type"].set("dihedral")
         self._new["SMARTS"].set("[H:1][C:2][C:3][H:4]")
-        self._new["which"].set("all")
+        self._new["which"].set("first")
         self._new["values"].set("0.0:180.0:10")
         self._new["units"].set("degree")
         self._new["scan type"].set("multidimensional")
-        self._new["direction"].set("any")
+        self._new["direction"].set("from current")
 
         # and lay them out
         self._reset_new_constraint_dialog()
@@ -475,7 +475,7 @@ class TkEnergyScan(seamm.TkNode):
         self._new["which"] = sw.LabeledCombobox(
             frame,
             labeltext="Which?:",
-            values=("all",),
+            values=("all", "first"),
         )
         self._new["values"] = sw.LabeledEntry(frame, labeltext="Value 1")
         self._new["units"] = sw.LabeledCombobox(
@@ -493,7 +493,7 @@ class TkEnergyScan(seamm.TkNode):
         self._new["direction"] = sw.LabeledCombobox(
             frame,
             labeltext="Direction:",
-            values=("any", "increasing", "decreasing", "from middle", "from current"),
+            values=("increasing", "decreasing", "from current"),
             state="readonly",
         )
 
@@ -531,10 +531,15 @@ class TkEnergyScan(seamm.TkNode):
                 widgets.append(self._new[key])
                 row += 1
 
+        units = self._new["units"].get()
         if _type == "distance":
-            self._new["units"].config(values=("degree", "steps"))
-        else:
             self._new["units"].config(values=("Å", "pm", "bohr", "steps"))
+            if units not in ("Å", "pm", "bohr", "steps"):
+                self._new["units"].set("Å")
+        else:
+            self._new["units"].config(values=("degree", "steps"))
+            if units not in ("degree", "steps"):
+                self._new["units"].set("degree")
 
         sw.align_labels(widgets)
 
@@ -657,7 +662,7 @@ class TkEnergyScan(seamm.TkNode):
         self._edit["which"] = sw.LabeledCombobox(
             frame,
             labeltext="Which?:",
-            values=("all",),
+            values=("all", "first"),
         )
         self._edit["values"] = sw.LabeledEntry(frame, labeltext="Value 1")
         self._edit["units"] = sw.LabeledCombobox(
@@ -675,7 +680,7 @@ class TkEnergyScan(seamm.TkNode):
         self._edit["direction"] = sw.LabeledCombobox(
             frame,
             labeltext="Direction:",
-            values=("any", "increasing", "decreasing", "from middle", "from current"),
+            values=("increasing", "decreasing", "from current"),
             state="readonly",
         )
 
@@ -710,10 +715,15 @@ class TkEnergyScan(seamm.TkNode):
                 widgets.append(self._edit[key])
                 row += 1
 
+        units = self._edit["units"].get()
         if _type == "distance":
-            self._edit["units"].config(values=("degree", "steps"))
-        else:
             self._edit["units"].config(values=("Å", "pm", "bohr", "steps"))
+            if units not in ("Å", "pm", "bohr", "steps"):
+                self._edit["units"].set("Å")
+        else:
+            self._edit["units"].config(values=("degree", "steps"))
+            if units not in ("degree", "steps"):
+                self._edit["units"].set("degree")
 
         sw.align_labels(widgets)
 
