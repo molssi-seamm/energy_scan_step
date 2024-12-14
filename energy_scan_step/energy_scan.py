@@ -24,7 +24,7 @@ import energy_scan_step
 import molsystem
 import read_structure_step
 import seamm
-from seamm_util import parse_list, Q_, units_class
+from seamm_util import getParser, parse_list, Q_, units_class
 import seamm_util.printing as printing
 from seamm_util.printing import FormattedText as __
 
@@ -253,9 +253,16 @@ class EnergyScan(seamm.Node):
         self.step = self.step + 1
         fmt = "05d"
 
+        # Make the geometric output readable by removing the ANSI escape sequences
+        logPath = Path("geomeTRIC.out")
+        if logPath.exists():
+            text = logPath.read_text()
+            text = ansi_escape.sub("", text)
+            logPath.write_text(text)
+
         n_atoms = self.working_configuration.n_atoms
 
-        if logger.isEnabledFor(logging.DEBUG):
+        if self.logger.isEnabledFor(logging.DEBUG):
             print("\nnew coordinates")
             for i in range(n_atoms):
                 print(
@@ -376,9 +383,9 @@ class EnergyScan(seamm.Node):
         gradients = data["gradients"]
 
         if self.logger.isEnabledFor(logging.DEBUG):
-            print("\ngradients")
+            logger.debug("\ngradients")
             for i in range(n_atoms):
-                print(
+                logger.debug(
                     f"   {gradients[i][0]:8.3f} {gradients[i][1]:8.3f} "
                     f"{gradients[i][2]:8.3f}"
                 )
@@ -392,6 +399,35 @@ class EnergyScan(seamm.Node):
         gradients = np.array(gradients) * Q_(1.0, units).to("E_h/a_0").magnitude
 
         return energy, gradients
+
+    def create_parser(self):
+        """Setup the command-line / config file parser"""
+        parser_name = "energy-scan-step"
+        parser = getParser()
+
+        # Remember if the parser exists ... this type of step may have been
+        # found before
+        parser_exists = parser.exists(parser_name)
+
+        # Create the standard options, e.g. log-level
+        super().create_parser(name=parser_name)
+
+        if not parser_exists:
+            # Any options for the energy itself
+            parser.add_argument(
+                parser_name,
+                "--html",
+                action="store_true",
+                help="whether to write out html files for graphs, etc.",
+            )
+
+        # Now need to walk through the steps in the subflowchart...
+        self.subflowchart.reset_visited()
+        node = self.subflowchart.get_node("1").next()
+        while node is not None:
+            node = node.create_parser()
+
+        return self.next()
 
     def description_text(self, P=None, short=False):
         """Create the text description of what this step will do.
@@ -477,7 +513,7 @@ class EnergyScan(seamm.Node):
                     text += __(node.description_text(), indent=3 * " ").__str__()
                 except Exception as e:
                     print(f"Error describing energy_scan flowchart: {e} in {node}")
-                    logger.critical(
+                    self.logger.critical(
                         f"Error describing energy_scan flowchart: {e} in {node}"
                     )
                     raise
@@ -486,7 +522,7 @@ class EnergyScan(seamm.Node):
                         "Unexpected error describing energy_scan flowchart: "
                         f"{sys.exc_info()[0]} in {str(node)}"
                     )
-                    logger.critical(
+                    self.logger.critical(
                         "Unexpected error describing energy_scan flowchart: "
                         f"{sys.exc_info()[0]} in {str(node)}"
                     )
@@ -595,8 +631,6 @@ class EnergyScan(seamm.Node):
                 raise RuntimeError(f"Cannot handle constraint of type '{_type}'.")
 
             type_data["constraints"][name] = data
-            # print("\n------------------ 1 -----------------\n")
-            # pprint.pprint(type_data)
             data["atoms"] = []
             data["matched atoms"] = []
             data["mapping"] = map_list
@@ -667,15 +701,15 @@ class EnergyScan(seamm.Node):
         n_atoms = starting_configuration.n_atoms
 
         if self.logger.isEnabledFor(logging.DEBUG):
-            print("initial coordinates")
+            logger.debug("initial coordinates")
             coordinates = starting_configuration.coordinates
             symbols = starting_configuration.atoms.symbols
             for i in range(n_atoms):
-                print(
+                logger.debug(
                     f"   {symbols[i]} {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f}"
                     f" {coordinates[i][2]:8.3f}"
                 )
-            print(starting_configuration.bonds)
+            logger.debug(starting_configuration.bonds)
 
         # Get the RDKit molecule for later use
         rdkMol = starting_configuration.to_RDKMol()
@@ -686,8 +720,9 @@ class EnergyScan(seamm.Node):
 
         data = self.setup_constraints(rdkConf)
 
-        logger.debug("Data from setup_constraints")
-        logger.debug(pprint.pformat(data))
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Data from setup_constraints")
+            self.logger.debug(pprint.pformat(data))
 
         current = {}
         scans = [scan for scan in data["scans"]]
@@ -706,15 +741,15 @@ class EnergyScan(seamm.Node):
         self._working_configuration = starting_configuration
         while not finished:
             if self.logger.isEnabledFor(logging.DEBUG):
-                print("step coordinates")
+                logger.debug("step coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    print(
+                    logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                print(self.working_configuration.bonds)
+                logger.debug(self.working_configuration.bonds)
 
             # Set the coordinates to the current value
             rdkMol = self.working_configuration.to_RDKMol()
@@ -799,15 +834,15 @@ class EnergyScan(seamm.Node):
             self.working_configuration.from_RDKMol(rdkMol, atoms=False, bonds=False)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                print("updated coordinates")
+                logger.debug("updated coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    print(
+                    logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                print(self.working_configuration.bonds)
+                logger.debug(self.working_configuration.bonds)
 
             coordinates = self.working_configuration.atoms.get_coordinates(
                 fractionals=False, as_array=True
@@ -816,9 +851,9 @@ class EnergyScan(seamm.Node):
             geoMol = geometric.molecule.Molecule()
             geoMol.elem = self.working_configuration.atoms.symbols
             if self.logger.isEnabledFor(logging.DEBUG):
-                print("coordinates")
+                logger.debug("coordinates")
                 for i in range(n_atoms):
-                    print(
+                    logger.debug(
                         f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
                         f"{coordinates[i][2]:8.3f}"
                     )
@@ -830,7 +865,7 @@ class EnergyScan(seamm.Node):
             coordsys = P["coordinate system"].split(":")[0].lower()
 
             if P["max steps"] == "default":
-                max_steps = 60 * self.working_configuration.n_atoms
+                max_steps = 12 * self.working_configuration.n_atoms
             else:
                 max_steps = P["max steps"]
 
@@ -882,24 +917,37 @@ format=%(message)s
 #format=%(asctime)s %(name)-12s %(levelname)-8s %(message)s
 """
             )
+            cc_logger = logging.getLogger("cclib")
+            cc_logger.setLevel(logging.WARNING)
+
+            converged = True
             with cd(self.working_directory):
-                m = geometric.optimize.run_optimizer(
-                    logIni=str(logIni),
-                    customengine=customengine,
-                    input="optimization.txt",
-                    constraints=str(constraints_path),
-                    qdata=True,
-                    **kwargs,
-                )
+                try:
+                    m = geometric.optimize.run_optimizer(
+                        logIni=str(logIni),
+                        customengine=customengine,
+                        input="optimization.txt",
+                        constraints=str(constraints_path),
+                        qdata=True,
+                        **kwargs,
+                    )
+                except geometric.errors.GeomOptNotConvergedError:
+                    converged = False
+
+            # Make the geometric output readable by removing the ANSI escape sequences
+            if logPath.exists():
+                text = logPath.read_text()
+                text = ansi_escape.sub("", text)
+                logPath.write_text(text)
 
             # Get the optimized energy & geometry
             energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
             coordinates = m.xyzs[-1].reshape(-1, 3)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                print("optimized coordinates")
+                logger.debug("optimized coordinates")
                 for i in range(n_atoms):
-                    print(
+                    logger.debug(
                         f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
                         f"{coordinates[i][2]:8.3f}"
                     )
@@ -937,15 +985,21 @@ format=%(message)s
             printer.important(text)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                print("step optimized coordinates")
+                logger.debug("step optimized coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    print(
+                    logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                print(self.working_configuration.bonds)
+                logger.debug(self.working_configuration.bonds)
+
+            if not converged:
+                printer.important("\n")
+                printer.important(self.indent + "Optimization did not converge!")
+                printer.important("\n")
+                raise RuntimeError("Energy Scan: Optimization did not converge!")
 
             for scan in scans:
                 self.logger.info(f"{scan=}")
@@ -979,7 +1033,7 @@ format=%(message)s
 
         energies.shape = n_points
         energies = energies.round(decimals=2).tolist()
-        logger.debug(pprint.pformat(energies))
+        self.logger.debug(pprint.pformat(energies))
 
         types = [data["scans"][scan]["type"] for scan in scans]
         self._create_energy_graph(scans, types, sorted_points, energies)
@@ -1021,8 +1075,8 @@ format=%(message)s
         rdkConf : rdkit.Conformer()
             The RDKit conformer corresponding to the current conformer.
         """
-        logger.debug("\n------------------ self.constriants -----------------\n")
-        logger.debug(pprint.pformat(self.constraints))
+        self.logger.debug("\n------------------ self.constriants -----------------\n")
+        self.logger.debug(pprint.pformat(self.constraints))
 
         result = {}
         scan_data = result["scans"] = {}
@@ -1033,7 +1087,7 @@ format=%(message)s
         for _type in ("distances", "angles", "dihedrals"):
             type_data = self.constraints[_type]
 
-            logger.debug(
+            self.logger.debug(
                 f"\n------------------ {_type[0:-1]} constraints -------------\n"
                 + pprint.pformat(type_data)
             )
@@ -1069,7 +1123,7 @@ format=%(message)s
                         if _type == "distances":
                             i, j = data["atoms"][match_no]
                             r = rdkit.Chem.rdMolTransforms.GetBondLength(rdkConf, i, j)
-                            logger.debug(f"{r=}")
+                            self.logger.debug(f"{r=}")
                             values.append(r)
                             factor = Q_(1.0, data["units"]).m_as("Å")
                         elif _type == "angles":
@@ -1077,7 +1131,7 @@ format=%(message)s
                             theta = rdkit.Chem.rdMolTransforms.GetAngleDeg(
                                 rdkConf, i, j, k
                             )
-                            logger.debug(f"{theta=}")
+                            self.logger.debug(f"{theta=}")
                             values.append(theta)
                             factor = Q_(1.0, data["units"]).m_as("degree")
                         elif _type == "dihedrals":
@@ -1085,7 +1139,7 @@ format=%(message)s
                             phi = rdkit.Chem.rdMolTransforms.GetDihedralDeg(
                                 rdkConf, i, j, k, lat
                             )
-                            logger.debug(f"{phi=}")
+                            self.logger.debug(f"{phi=}")
                             values.append(phi)
                             factor = Q_(1.0, data["units"]).m_as("degree")
 
@@ -1104,7 +1158,8 @@ format=%(message)s
                     if data["operation"] == "scan":
                         # Get the individual points in Angstrom
                         points = [
-                            round(factor * v, 6) for v in parse_list(data["values"])
+                            round(factor * v, 6)
+                            for v in parse_list(data["values"], duplicates=False)
                         ]
 
                         # Work out an order for the points
@@ -1136,31 +1191,31 @@ format=%(message)s
 
                         atoms = data["atoms"][indices[index]]
 
-                        logger.debug(
+                        self.logger.debug(
                             f"{name}#{count} -- {index} --> {indices[index]} {closest}"
                         )
-                        logger.debug(f"{points=}")
+                        self.logger.debug(f"{points=}")
                         string = " ".join([str(x + 1) for x in atoms])
-                        logger.debug(f"{string=}")
+                        self.logger.debug(f"{string=}")
 
                         scan_data[f"{name}#{count}"] = {
                             "type": _type[0:-1],
                             "atoms": [*atoms],
                             "points": [*points],
                         }
-                        logger.debug(f"Scan data for {name}#{count}:")
-                        logger.debug(pprint.pformat(scan_data[f"{name}#{count}"]))
-                        logger.debug("")
+                        self.logger.debug(f"Scan data for {name}#{count}:")
+                        self.logger.debug(pprint.pformat(scan_data[f"{name}#{count}"]))
+                        self.logger.debug("")
                     elif data["operation"] == "set":
                         # Find instance closest to first point
                         tmp = np.abs(np.array(values) - data["values"])
                         index = tmp.argmin()
                         closest = tmp.min()
 
-                        logger.debug(f"{name}#{count=} -- {index} {closest}")
-                        logger.debug(f"{data['values']=}")
+                        self.logger.debug(f"{name}#{count=} -- {index} {closest}")
+                        self.logger.debug(f"{data['values']=}")
                         string = " ".join([str(x + 1) for x in atoms])
-                        logger.debug(f"{string=}")
+                        self.logger.debug(f"{string=}")
 
                         set_data[f"{name}#{count}"] = {
                             "type": _type[0:-1],
@@ -1173,10 +1228,10 @@ format=%(message)s
                         index = tmp.argmin()
                         closest = tmp.min()
 
-                        logger.debug(f"{name}#{count=} -- {index} {closest}")
-                        logger.debug(f"{data['values']=}")
+                        self.logger.debug(f"{name}#{count=} -- {index} {closest}")
+                        self.logger.debug(f"{data['values']=}")
                         string = " ".join([str(x + 1) for x in atoms])
-                        logger.debug(f"{string=}")
+                        self.logger.debug(f"{string=}")
 
                         freeze_data[name] = {
                             "type": _type[0:-1],
@@ -1301,7 +1356,7 @@ format=%(message)s
                 zunits="kJ/mol",
             )
         else:
-            raise NotImplementedError("can't graph more than 2 dimensions")
+            self.logger.warning("Energy Scan can't graph more than 2 dimensions")
 
         figure.grid_plots(name)
 
@@ -1311,8 +1366,7 @@ format=%(message)s
 
         figure.dump(path)
 
-        write_html = True
-        if write_html:
+        if "html" in self.options and self.options["html"]:
             if n_dimensions == 1:
                 figure.template = "line.html_template"
             elif n_dimensions == 2:

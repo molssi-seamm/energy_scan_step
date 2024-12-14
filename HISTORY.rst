@@ -1,6 +1,8 @@
 =======
 History
 =======
+2024.12.14 -- Cleanup! Reasonable working version.
+
 2024.5.23 -- Initial working version
    * Can handle scans, freezing coordinates. Is not optimized yet.
    * Produces a graph of 1- and 2-D scans
