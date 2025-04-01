@@ -1,6 +1,12 @@
 =======
 History
 =======
+2025.4.1 -- Bugfix: Error handling the coordinates in some cases
+   * There was an error in handling the coordinates created by changes in the RDKit module
+     in molsystem. This fixes it.
+   * The incorrect logger was used for debugging.
+   * Small format updates to due to changes in the code formatting rules in black.
+     
 2024.12.14 -- Cleanup! Reasonable working version.
 
 2024.5.23 -- Initial working version

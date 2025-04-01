@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Non-graphical part of the Energy Scan step in a SEAMM flowchart
-"""
+"""Non-graphical part of the Energy Scan step in a SEAMM flowchart"""
 
 from datetime import datetime
 import json
@@ -701,15 +700,15 @@ class EnergyScan(seamm.Node):
         n_atoms = starting_configuration.n_atoms
 
         if self.logger.isEnabledFor(logging.DEBUG):
-            logger.debug("initial coordinates")
+            self.logger.debug("initial coordinates")
             coordinates = starting_configuration.coordinates
             symbols = starting_configuration.atoms.symbols
             for i in range(n_atoms):
-                logger.debug(
+                self.logger.debug(
                     f"   {symbols[i]} {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f}"
                     f" {coordinates[i][2]:8.3f}"
                 )
-            logger.debug(starting_configuration.bonds)
+            self.logger.debug(starting_configuration.bonds)
 
         # Get the RDKit molecule for later use
         rdkMol = starting_configuration.to_RDKMol()
@@ -741,15 +740,15 @@ class EnergyScan(seamm.Node):
         self._working_configuration = starting_configuration
         while not finished:
             if self.logger.isEnabledFor(logging.DEBUG):
-                logger.debug("step coordinates")
+                self.logger.debug("step coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    logger.debug(
+                    self.logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                logger.debug(self.working_configuration.bonds)
+                self.logger.debug(self.working_configuration.bonds)
 
             # Set the coordinates to the current value
             rdkMol = self.working_configuration.to_RDKMol()
@@ -826,23 +825,24 @@ class EnergyScan(seamm.Node):
                 P={
                     "structure handling": "Create a new configuration",
                     "configuration name": label,
+                    "system name": "keep current name",
                 },
             )
             system.configuration = self.working_configuration
 
             # Set the coordinates to the updated ones for this scan
-            self.working_configuration.from_RDKMol(rdkMol, atoms=False, bonds=False)
+            self.working_configuration.coordinates_from_RDKMol(rdkMol)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                logger.debug("updated coordinates")
+                self.logger.debug("updated coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    logger.debug(
+                    self.logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                logger.debug(self.working_configuration.bonds)
+                self.logger.debug(self.working_configuration.bonds)
 
             coordinates = self.working_configuration.atoms.get_coordinates(
                 fractionals=False, as_array=True
@@ -851,9 +851,9 @@ class EnergyScan(seamm.Node):
             geoMol = geometric.molecule.Molecule()
             geoMol.elem = self.working_configuration.atoms.symbols
             if self.logger.isEnabledFor(logging.DEBUG):
-                logger.debug("coordinates")
+                self.logger.debug("coordinates")
                 for i in range(n_atoms):
-                    logger.debug(
+                    self.logger.debug(
                         f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
                         f"{coordinates[i][2]:8.3f}"
                     )
@@ -945,9 +945,9 @@ format=%(message)s
             coordinates = m.xyzs[-1].reshape(-1, 3)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                logger.debug("optimized coordinates")
+                self.logger.debug("optimized coordinates")
                 for i in range(n_atoms):
-                    logger.debug(
+                    self.logger.debug(
                         f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
                         f"{coordinates[i][2]:8.3f}"
                     )
@@ -985,15 +985,15 @@ format=%(message)s
             printer.important(text)
 
             if self.logger.isEnabledFor(logging.DEBUG):
-                logger.debug("step optimized coordinates")
+                self.logger.debug("step optimized coordinates")
                 coordinates = self.working_configuration.coordinates
                 symbols = self.working_configuration.atoms.symbols
                 for i in range(n_atoms):
-                    logger.debug(
+                    self.logger.debug(
                         f"   {symbols[i]} {coordinates[i][0]:8.3f} "
                         f"{coordinates[i][1]:8.3f} {coordinates[i][2]:8.3f}"
                     )
-                logger.debug(self.working_configuration.bonds)
+                self.logger.debug(self.working_configuration.bonds)
 
             if not converged:
                 printer.important("\n")
@@ -1277,10 +1277,10 @@ format=%(message)s
                 xlabel = "R (Å)"
                 xunits = "Å"
             elif _type == "angle":
-                xlabel = "\N{Mathematical Italic Theta Symbol} (º)"
+                xlabel = "\N{MATHEMATICAL ITALIC THETA SYMBOL} (º)"
                 xunits = "º"
             else:
-                xlabel = "\N{Mathematical Italic Phi Symbol} (º)"
+                xlabel = "\N{MATHEMATICAL ITALIC PHI SYMBOL} (º)"
                 xunits = "º"
 
             x_axis = plot.add_axis("x", label=xlabel)
@@ -1314,10 +1314,10 @@ format=%(message)s
                 xlabel = f"R {scan} (Å)"
                 xunits = "Å"
             elif _type == "angle":
-                xlabel = f"\N{Mathematical Italic Theta Symbol} {scan} (º)"
+                xlabel = f"\N{MATHEMATICAL ITALIC THETA SYMBOL} {scan} (º)"
                 xunits = "º"
             else:
-                xlabel = f"\N{Mathematical Italic Phi Symbol} {scan} (º)"
+                xlabel = f"\N{MATHEMATICAL ITALIC PHI SYMBOL} {scan} (º)"
                 xunits = "º"
 
             x_axis = plot.add_axis("x", label=xlabel)
@@ -1329,10 +1329,10 @@ format=%(message)s
                 ylabel = f"R {scan} (Å)"
                 yunits = "Å"
             elif _type == "angle":
-                ylabel = f"\N{Mathematical Italic Theta Symbol} {scan} (º)"
+                ylabel = f"\N{MATHEMATICAL ITALIC THETA SYMBOL} {scan} (º)"
                 yunits = "º"
             else:
-                ylabel = f"\N{Mathematical Italic Phi Symbol} {scan} (º)"
+                ylabel = f"\N{MATHEMATICAL ITALIC PHI SYMBOL} {scan} (º)"
                 yunits = "º"
 
             y_axis = plot.add_axis("y", label=ylabel)
