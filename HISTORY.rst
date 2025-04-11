@@ -1,6 +1,10 @@
 =======
 History
 =======
+2025.4.11 -- Enhancements to allow repeted points
+   * Allows the path to have repeated points, which is useful to e.g. go forwards and
+     backawards to see the hysteresis.
+     
 2025.4.1 -- Bugfix: Error handling the coordinates in some cases
    * There was an error in handling the coordinates created by changes in the RDKit module
      in molsystem. This fixes it.

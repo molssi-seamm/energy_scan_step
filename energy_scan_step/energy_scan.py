@@ -726,7 +726,8 @@ class EnergyScan(seamm.Node):
         current = {}
         scans = [scan for scan in data["scans"]]
         current = {scan: 0 for scan in scans}
-        sorted_points = [sorted(data["scans"][scan]["points"]) for scan in scans]
+        # sorted_points = [sorted(data["scans"][scan]["points"]) for scan in scans]
+        sorted_points = [data["scans"][scan]["points"] for scan in scans]
 
         # Setup a table for printing the results
         table = {scan: [] for scan in scans}
@@ -763,11 +764,16 @@ class EnergyScan(seamm.Node):
                 _atoms = data["scans"][scan]["atoms"]
                 _point = data["scans"][scan]["points"][current[scan]]
 
-                pts.append(_point)
+                n = data["scans"][scan]["points"][: current[scan]].count(_point)
+                if n > 0:
+                    pt_label = f"{_point}_{n+1}"
+                else:
+                    pt_label = f"{_point}"
+                pts.append(pt_label)
                 self.logger.info(
-                    f"{_point=}  {data['scans'][scan]['points']} {current[scan]}"
+                    f"{pt_label=}  {data['scans'][scan]['points']} {current[scan]}"
                 )
-                label.append(f"{scan} {_point}")
+                label.append(f"{scan} {pt_label}")
                 table[scan].append(_point)
 
                 atom_string = " ".join([str(at + 1) for at in _atoms])
@@ -813,8 +819,15 @@ class EnergyScan(seamm.Node):
                             rdkConf, iat, jat, kat, lat, _value
                         )
 
-            self._working_directory = directory / "__".join(label)
-            self.working_directory.mkdir(parents=True, exist_ok=True)
+            # Make a directory, ensuring that it is new
+            tmp = 1
+            path = directory / "__".join(label)
+            while path.exists():
+                tmp += 1
+                path = directory / ("__".join(label) + f" {tmp}")
+
+            self._working_directory = path
+            self.working_directory.mkdir(parents=True, exist_ok=False)
 
             label = " @ ".join(label)
 
@@ -1025,7 +1038,7 @@ format=%(message)s
         # Output all the tables and graphs
         # Sort the points ...
         all_points = [*all_data.keys()]
-        all_points.sort()
+        # all_points.sort()
         energies = np.array([all_data[pt]["energy"] for pt in all_points])
         energies -= np.min(energies)
 
@@ -1159,7 +1172,7 @@ format=%(message)s
                         # Get the individual points in Angstrom
                         points = [
                             round(factor * v, 6)
-                            for v in parse_list(data["values"], duplicates=False)
+                            for v in parse_list(data["values"], duplicates=True)
                         ]
 
                         # Work out an order for the points
@@ -1187,7 +1200,8 @@ format=%(message)s
                                     pt = tmp.argmin()
                                     closest = tmp.min()
                                     index = i
-                            points = points[pt:] + points[pt - 1 :: -1]
+                            if pt > 0:
+                                points = points[pt:] + points[pt - 1 :: -1]
 
                         atoms = data["atoms"][indices[index]]
 
@@ -1291,6 +1305,8 @@ format=%(message)s
                 x_axis=x_axis,
                 y_axis=y_axis,
                 name=scan,
+                width=1,
+                hovertemplate=f"%{{x}} {xunits} %{{y}} kJ/mol {scan}",
                 x=pts,
                 xlabel=xlabel,
                 xunits=xunits,
