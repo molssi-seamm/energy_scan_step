@@ -77,6 +77,10 @@ class SEAMMEngine(geometric.engine.Engine):
             The geomeTRIC molecule to work with
         """
         self.step = step
+        self.energy = None
+        self.gradient = None
+        self.xyz = None
+
         super().__init__(molecule)
 
     def calc_new(self, coords, dirname):
@@ -99,8 +103,12 @@ class SEAMMEngine(geometric.engine.Engine):
                 Hartree/bohr as a 1-D Numpy array.
         """
         xyz = coords.reshape(-1, 3) * Q_(1.0, "a_0").m_as("angstrom")
+        self.xyz = list(xyz)
 
         energy, gradient = self.step.calculate_gradients(xyz)
+
+        self.energy = energy
+        self.gradient = gradient
 
         return {"energy": energy, "gradient": gradient.ravel()}
 
@@ -954,8 +962,13 @@ format=%(message)s
                 logPath.write_text(text)
 
             # Get the optimized energy & geometry
-            energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
-            coordinates = m.xyzs[-1].reshape(-1, 3)
+            if converged:
+                energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
+                coordinates = m.xyzs[-1].reshape(-1, 3)
+            else:
+                # or the last...
+                energy = customengine.energy * Q_(1.0, "E_h").to("kJ/mol").magnitude
+                coordinates = customengine.xyz
 
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug("optimized coordinates")
@@ -1012,7 +1025,7 @@ format=%(message)s
                 printer.important("\n")
                 printer.important(self.indent + "Optimization did not converge!")
                 printer.important("\n")
-                raise RuntimeError("Energy Scan: Optimization did not converge!")
+                # raise RuntimeError("Energy Scan: Optimization did not converge!")
 
             for scan in scans:
                 self.logger.info(f"{scan=}")

@@ -1,7 +1,11 @@
 =======
 History
 =======
-2025.4.11 -- Enhancements to allow repeted points
+2025.5.7 -- Enhancement to continue if minimization does not converge
+   * Continue even if the minimization does not fully converge, as sometimes seems to be
+     the case.
+     
+2025.4.11 -- Enhancements to allow repeated points
    * Allows the path to have repeated points, which is useful to e.g. go forwards and
      backawards to see the hysteresis.
      
