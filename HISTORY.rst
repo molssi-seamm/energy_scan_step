@@ -1,7 +1,7 @@
 =======
 History
 =======
-2025.5.7 -- Enhancement to continue of minimization does not converge
+2025.5.7 -- Enhancement to continue if minimization does not converge
    * Continue even if the minimization does not fully converge, as sometimes seems to be
      the case.
      
