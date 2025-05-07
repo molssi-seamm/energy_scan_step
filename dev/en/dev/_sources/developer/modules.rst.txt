@@ -1,7 +1,0 @@
-energy_scan_step
-================
-
-.. toctree::
-   :maxdepth: 4
-
-   energy_scan_step
