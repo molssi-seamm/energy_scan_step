@@ -845,11 +845,10 @@ class EnergyScan(seamm.Node):
             _, self._working_configuration = self.get_system_configuration(
                 P={
                     "structure handling": "Create a new configuration",
-                    "configuration name": label,
-                    "system name": "keep current name",
                 },
             )
             system.configuration = self.working_configuration
+            self._working_configuration.name = label
 
             # Set the coordinates to the updated ones for this scan
             self.working_configuration.coordinates_from_RDKMol(rdkMol)

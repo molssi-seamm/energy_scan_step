@@ -1,6 +1,10 @@
 =======
 History
 =======
+2025.8.5 -- Bugfix: not correclty naming the configurations in the scan
+   * The code did not correctly name the configurations generated during a scan, so
+     their names were None.
+
 2025.5.7 -- Enhancement to continue if minimization does not converge
    * Continue even if the minimization does not fully converge, as sometimes seems to be
      the case.
