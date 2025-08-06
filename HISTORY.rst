@@ -1,7 +1,11 @@
 =======
 History
 =======
-2025.8.5 -- Bugfix: not correclty naming the configurations in the scan
+2025.8.6 -- Allows the values defining the scans to be variables.
+   * This enhancement allows the variables defining the scan or frozen coordinate to be
+     variables as well as static values.
+
+2025.8.5 -- Bugfix: not correctly naming the configurations in the scan
    * The code did not correctly name the configurations generated during a scan, so
      their names were None.
 
