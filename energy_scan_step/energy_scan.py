@@ -599,6 +599,11 @@ class EnergyScan(seamm.Node):
 
         for name, original in P["constraints"].items():
             data = {**original}
+            # dereference any variables or expressions in the data
+            for key, value in data.items():
+                if isinstance(value, str) and value[0] == "$" or value[0] == "=":
+                    data[key] = eval(value[1:], seamm.flowchart_variables._data)
+
             _type = data["type"]
 
             pattern = rdkit.Chem.MolFromSmarts(data["SMARTS"])
