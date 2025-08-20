@@ -10,6 +10,7 @@ from pathlib import Path
 import pkg_resources
 import pprint  # noqa: F401
 import re
+import shlex
 import sys
 import traceback
 
@@ -80,6 +81,7 @@ class SEAMMEngine(geometric.engine.Engine):
         self.energy = None
         self.gradient = None
         self.xyz = None
+        self.results = None
 
         super().__init__(molecule)
 
@@ -105,7 +107,7 @@ class SEAMMEngine(geometric.engine.Engine):
         xyz = coords.reshape(-1, 3) * Q_(1.0, "a_0").m_as("angstrom")
         self.xyz = list(xyz)
 
-        energy, gradient = self.step.calculate_gradients(xyz)
+        energy, gradient, self.results = self.step.calculate_gradients(xyz)
 
         self.energy = energy
         self.gradient = gradient
@@ -405,7 +407,7 @@ class EnergyScan(seamm.Node):
         # Units!
         gradients = np.array(gradients) * Q_(1.0, units).to("E_h/a_0").magnitude
 
-        return energy, gradients
+        return energy, gradients, data
 
     def create_parser(self):
         """Setup the command-line / config file parser"""
@@ -420,12 +422,32 @@ class EnergyScan(seamm.Node):
         super().create_parser(name=parser_name)
 
         if not parser_exists:
-            # Any options for the energy itself
+            # Any options for the energy scan
             parser.add_argument(
                 parser_name,
-                "--html",
-                action="store_true",
-                help="whether to write out html files for graphs, etc.",
+                "--graph-formats",
+                default=tuple(),
+                choices=("html", "png", "jpeg", "webp", "svg", "pdf"),
+                nargs="+",
+                help="extra formats to write for graphs",
+            )
+            parser.add_argument(
+                parser_name,
+                "--graph-fontsize",
+                default=15,
+                help="Font size in graphs, defaults to 15 pixels",
+            )
+            parser.add_argument(
+                parser_name,
+                "--graph-width",
+                default=1024,
+                help="Width of graphs in formats that support it, defaults to 1024",
+            )
+            parser.add_argument(
+                parser_name,
+                "--graph-height",
+                default=1024,
+                help="Height of graphs in formats that support it, defaults to 1024",
             )
 
         # Now need to walk through the steps in the subflowchart...
@@ -600,6 +622,8 @@ class EnergyScan(seamm.Node):
         for name, original in P["constraints"].items():
             data = {**original}
             # dereference any variables or expressions in the data
+            if name[0] == "$" or name[0] == "=":
+                name = eval(name[1:], seamm.flowchart_variables._data)
             for key, value in data.items():
                 if isinstance(value, str) and value[0] == "$" or value[0] == "=":
                     data[key] = eval(value[1:], seamm.flowchart_variables._data)
@@ -794,7 +818,15 @@ class EnergyScan(seamm.Node):
 
                 if _type == "distance":
                     iat, jat = _atoms
-                    rdkit.Chem.rdMolTransforms.SetBondLength(rdkConf, iat, jat, _point)
+                    try:
+                        rdkit.Chem.rdMolTransforms.SetBondLength(
+                            rdkConf, iat, jat, _point
+                        )
+                    except ValueError:
+                        rdkMol.AddBond(iat, jat, rdkit.Chem.BondType.SINGLE)
+                        rdkit.Chem.rdMolTransforms.SetBondLength(
+                            rdkConf, iat, jat, _point
+                        )
                 elif _type == "angle":
                     iat, jat, kat = _atoms
                     rdkit.Chem.rdMolTransforms.SetAngleDeg(
@@ -993,6 +1025,18 @@ format=%(message)s
                 "label": label,
             }
 
+            # Spin info from quantum calculations
+            for key in ("S**2", "S**2 after annihilation"):
+                if key in customengine.results:
+                    all_data[tuple(pts)][key] = customengine.results[key]
+                    if key not in table:
+                        table[key] = []
+                    table[key].append(f"{customengine.results[key]:.4f}")
+                elif key in table:
+                    # Gaussian seems not to output S**2 if exactly zero...
+                    all_data[tuple(pts)][key] = 0.0
+                    table[key].append("0.0000")
+
             table["Steps"].append(self.step)
             table["Energy"].append(f"{energy:.6f}")
 
@@ -1059,6 +1103,16 @@ format=%(message)s
         energies = np.array([all_data[pt]["energy"] for pt in all_points])
         energies -= np.min(energies)
 
+        # See if we have spin
+        if "S**2" in all_data[all_points[0]]:
+            S2s = [all_data[pt]["S**2"] for pt in all_points]
+        else:
+            S2s = None
+        if "S**2 after annihilation" in all_data[all_points[0]]:
+            S2as = [all_data[pt]["S**2 after annihilation"] for pt in all_points]
+        else:
+            S2as = None
+
         n_points = [len(pts) for pts in sorted_points]
 
         energies.shape = n_points
@@ -1066,7 +1120,9 @@ format=%(message)s
         self.logger.debug(pprint.pformat(energies))
 
         types = [data["scans"][scan]["type"] for scan in scans]
-        self._create_energy_graph(scans, types, sorted_points, energies)
+        self._create_energy_graph(
+            scans, types, sorted_points, energies, S2s=S2s, S2as=S2as
+        )
 
         scan_configurations = [all_data[pt]["geometry"] for pt in all_points]
         self._create_sdf(scan_configurations)
@@ -1222,20 +1278,24 @@ format=%(message)s
 
                         atoms = data["atoms"][indices[index]]
 
+                        count_str = "" if count == 1 else f"#{count}"
                         self.logger.debug(
-                            f"{name}#{count} -- {index} --> {indices[index]} {closest}"
+                            f"{name}{count_str} -- {index} --> {indices[index]} "
+                            f"{closest}"
                         )
                         self.logger.debug(f"{points=}")
                         string = " ".join([str(x + 1) for x in atoms])
                         self.logger.debug(f"{string=}")
 
-                        scan_data[f"{name}#{count}"] = {
+                        scan_data[f"{name}{count_str}"] = {
                             "type": _type[0:-1],
                             "atoms": [*atoms],
                             "points": [*points],
                         }
-                        self.logger.debug(f"Scan data for {name}#{count}:")
-                        self.logger.debug(pprint.pformat(scan_data[f"{name}#{count}"]))
+                        self.logger.debug(f"Scan data for {name}{count_str}:")
+                        self.logger.debug(
+                            pprint.pformat(scan_data[f"{name}{count_str}"])
+                        )
                         self.logger.debug("")
                     elif data["operation"] == "set":
                         # Find instance closest to first point
@@ -1248,7 +1308,7 @@ format=%(message)s
                         string = " ".join([str(x + 1) for x in atoms])
                         self.logger.debug(f"{string=}")
 
-                        set_data[f"{name}#{count}"] = {
+                        set_data[f"{name}{count_str}"] = {
                             "type": _type[0:-1],
                             "atoms": data["atoms"][index],
                             "value": data["values"],
@@ -1277,7 +1337,7 @@ format=%(message)s
 
         return result
 
-    def _create_energy_graph(self, scans, types, points, energies):
+    def _create_energy_graph(self, scans, types, points, energies, S2s=None, S2as=None):
         """Create a simple xy plot of the energy along a scan.
 
         Parameters
@@ -1299,6 +1359,7 @@ format=%(message)s
             figure = self.create_figure(
                 module_path=(self.__module__.split(".")[0], "seamm"),
                 template="line.graph_template",
+                fontsize=self.options["graph_fontsize"],
                 title=scan,
             )
             name = scan.replace(" ", "_")
@@ -1315,22 +1376,50 @@ format=%(message)s
                 xunits = "º"
 
             x_axis = plot.add_axis("x", label=xlabel)
-            y_axis = plot.add_axis("y", label="Energy (kJ/mol)", anchor=x_axis)
+            y_axis = plot.add_axis(
+                "y", label="Energy (kJ/mol)", anchor=x_axis, rangemode="tozero"
+            )
             x_axis.anchor = y_axis
 
             plot.add_trace(
-                x_axis=x_axis,
-                y_axis=y_axis,
-                name=scan,
-                width=1,
+                color="black",
                 hovertemplate=f"%{{x}} {xunits} %{{y}} kJ/mol {scan}",
+                name=scan,
+                width=3,
                 x=pts,
+                x_axis=x_axis,
                 xlabel=xlabel,
                 xunits=xunits,
                 y=energies,
+                y_axis=y_axis,
                 ylabel="E",
                 yunits="kJ/mol",
             )
+
+            if S2s is not None:
+                y2_axis = plot.add_axis(
+                    "y",
+                    anchor=x_axis,
+                    gridcolor="pink",
+                    label="<S\N{SUPERSCRIPT TWO}>",
+                    overlaying="y",
+                    rangemode="tozero",
+                    side="right",
+                    tickmode="sync",
+                )
+                plot.add_trace(
+                    color="red",
+                    dash="dot",
+                    hovertemplate=f"%{{x}} {xunits} %{{y}}",
+                    name="<S\N{SUPERSCRIPT TWO}>",
+                    width=2,
+                    x=pts,
+                    x_axis=x_axis,
+                    y=S2s,
+                    y_axis=y2_axis,
+                    ylabel="<S\N{SUPERSCRIPT TWO}>",
+                )
+
         elif n_dimensions == 2:
             figure = self.create_figure(
                 module_path=(self.__module__.split(".")[0], "seamm"),
@@ -1392,20 +1481,20 @@ format=%(message)s
             self.logger.warning("Energy Scan can't graph more than 2 dimensions")
 
         figure.grid_plots(name)
+        figure.write_file(self.wd / "EnergyScan.graph")
 
-        node_path = Path(self.directory)
-        node_path.mkdir(parents=True, exist_ok=True)
-        path = node_path / "EnergyScan.graph"
-
-        figure.dump(path)
-
-        if "html" in self.options and self.options["html"]:
-            if n_dimensions == 1:
-                figure.template = "line.html_template"
-            elif n_dimensions == 2:
-                figure.template = "surface.html_template"
-
-            figure.dump(path.with_suffix(".html"))
+        # Other requested formats
+        if "graph_formats" in self.options:
+            formats = self.options["graph_formats"]
+            # If from seamm.ini, is a single string so parse.
+            if isinstance(formats, str):
+                formats = shlex.split(formats)
+            for _format in formats:
+                figure.write_file(
+                    self.wd / f"EnergyScan.{_format}",
+                    width=int(self.options["graph_width"]),
+                    height=int(self.options["graph_height"]),
+                )
 
     def _create_sdf(self, configurations):
         """Write the configurations to an SDF file.

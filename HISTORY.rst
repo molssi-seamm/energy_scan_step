@@ -1,6 +1,13 @@
 =======
 History
 =======
+2025.8.20 -- Improved the graphs and added spins to them if available.
+   * Added the ability to output graphs to one or more of the following formats: html,
+     png, webp, svg, or pdf.
+   * Capture the spin values, S**2 and the projected S**2, if captured by the quantum
+     code, and add them to the graphs.
+   * Fixed an issue if the two atoms in a bond scan were not actually bonded.
+
 2025.8.6 -- Allows the values defining the scans to be variables.
    * This enhancement allows the variables defining the scan or frozen coordinate to be
      variables as well as static values.
