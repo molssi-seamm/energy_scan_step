@@ -1,6 +1,8 @@
 =======
 History
 =======
+2026.3.1 -- Internal: switching from deprecated library pkg_resources to importlib
+
 2025.8.20 -- Improved the graphs and added spins to them if available.
    * Added the ability to output graphs to one or more of the following formats: html,
      png, webp, svg, or pdf.

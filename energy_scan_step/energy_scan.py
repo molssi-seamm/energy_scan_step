@@ -3,11 +3,11 @@
 """Non-graphical part of the Energy Scan step in a SEAMM flowchart"""
 
 from datetime import datetime
+import importlib
 import json
 import logging
 import os
 from pathlib import Path
-import pkg_resources
 import pprint  # noqa: F401
 import re
 import shlex
@@ -41,7 +41,7 @@ job = printing.getPrinter()
 printer = printing.getPrinter("Energy Scan")
 
 # Add this module's properties to the standard properties
-path = Path(pkg_resources.resource_filename(__name__, "data/"))
+path = importlib.resources.files("energy_scan_step") / "data"
 csv_file = path / "properties.csv"
 if path.exists():
     molsystem.add_properties_from_file(csv_file)
@@ -945,8 +945,7 @@ class EnergyScan(seamm.Node):
             self.step = 0
             logPath = self.working_directory / "geomeTRIC.out"
             logIni = self.working_directory / "log.ini"
-            logIni.write_text(
-                f"""\
+            logIni.write_text(f"""\
 # The default logging configuration file for geomeTRIC
 # Modified to write to {logPath}
 
@@ -972,8 +971,7 @@ args=("{logPath}",)
 [formatter_formatter]
 format=%(message)s
 #format=%(asctime)s %(name)-12s %(levelname)-8s %(message)s
-"""
-            )
+""")
             cc_logger = logging.getLogger("cclib")
             cc_logger.setLevel(logging.WARNING)
 

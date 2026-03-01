@@ -2,6 +2,7 @@
 """
 Control parameters for the Energy Scan step in a SEAMM flowchart
 """
+
 import logging
 
 import seamm
