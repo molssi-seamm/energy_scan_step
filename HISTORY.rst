@@ -1,6 +1,14 @@
 =======
 History
 =======
+2026.9.25 -- Bugfix: the Energy Scan step failed to load on Python 3.12 outside conda
+    * The 2026.3.1 release, which replaced the deprecated ``pkg_resources`` module
+      with ``importlib``, never reached PyPI because its publishing run failed, so
+      installations still had the 2025.8.20 code. In an environment without
+      setuptools (a plain venv, for example) that version failed to import with
+      ``No module named 'pkg_resources'`` and the step was missing from the
+      flowchart editor. This release publishes the fix.
+
 2026.3.1 -- Internal: switching from deprecated library pkg_resources to importlib
 
 2025.8.20 -- Improved the graphs and added spins to them if available.

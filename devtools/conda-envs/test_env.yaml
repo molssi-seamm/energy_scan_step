@@ -8,11 +8,9 @@ dependencies:
   - python
   - pip
 
-  # SEAMM
-  - seamm
-
   - geometric
   - numpy
+  - openbabel
   - rdkit
   - tabulate
 
@@ -29,6 +27,9 @@ dependencies:
 
   # Pip-only installs
   - pip:
+    - seamm
+    - seamm-util
+    - seamm-widgets
     - read-structure-step
     
     # Documentation
