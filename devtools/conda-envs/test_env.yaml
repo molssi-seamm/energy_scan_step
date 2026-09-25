@@ -10,6 +10,7 @@ dependencies:
 
   - geometric
   - numpy
+  - openbabel
   - rdkit
   - tabulate
 
