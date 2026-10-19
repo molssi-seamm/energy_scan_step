@@ -1,6 +1,12 @@
 =======
 History
 =======
+2026.10.19 -- Bugfix: scanning a dihedral or angle in a ring
+    * A dihedral or angle about a bond in a ring, such as the pucker of ethylene
+      carbonate, could not be scanned or fixed: RDKit cannot set it, and the scan
+      stopped. It is now left to the optimizer, which drives it to each value with a
+      constraint ($set in geomeTRIC); the output notes this.
+
 2026.9.25 -- Bugfix: the Energy Scan step failed to load on Python 3.12 outside conda
     * The 2026.3.1 release, which replaced the deprecated ``pkg_resources`` module
       with ``importlib``, never reached PyPI because its publishing run failed, so
