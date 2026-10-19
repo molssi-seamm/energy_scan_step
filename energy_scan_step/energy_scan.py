@@ -701,6 +701,67 @@ class EnergyScan(seamm.Node):
 
         return result
 
+    def _set_coordinate(
+        self, rdkMol, rdkConf, _type, atoms, value, frozen_lines, set_lines
+    ):
+        """Set a distance, angle or dihedral in the structure, for geomeTRIC to hold.
+
+        RDKit cannot set an angle or dihedral whose bond is in a ring (e.g. the
+        pucker of a ring), so such a coordinate is left as it is, and geomeTRIC is
+        asked to drive it to the value instead ($set). Each point of a scan starts
+        from the optimized structure of the one before, so the change is small.
+
+        Parameters
+        ----------
+        rdkMol : rdkit.Chem.Mol
+            The molecule, whose bonds may be added to for a distance.
+        rdkConf : rdkit.Chem.Conformer
+            Its coordinates, changed in place.
+        _type : str
+            "distance", "angle" or "dihedral".
+        atoms : [int]
+            The atoms, 0-based.
+        value : float
+            The value, in Å or degrees.
+        frozen_lines, set_lines : [str]
+            The lines of geomeTRIC's $freeze and $set sections, added to.
+        """
+        atom_string = " ".join([str(at + 1) for at in atoms])
+        try:
+            if _type == "distance":
+                iat, jat = atoms
+                try:
+                    rdkit.Chem.rdMolTransforms.SetBondLength(rdkConf, iat, jat, value)
+                except ValueError:
+                    rdkMol.AddBond(iat, jat, rdkit.Chem.BondType.SINGLE)
+                    rdkit.Chem.rdMolTransforms.SetBondLength(rdkConf, iat, jat, value)
+            elif _type == "angle":
+                iat, jat, kat = atoms
+                rdkit.Chem.rdMolTransforms.SetAngleDeg(rdkConf, iat, jat, kat, value)
+            elif _type == "dihedral":
+                iat, jat, kat, lat = atoms
+                rdkit.Chem.rdMolTransforms.SetDihedralDeg(
+                    rdkConf, iat, jat, kat, lat, value
+                )
+        except ValueError as e:
+            if "ring" not in str(e):
+                raise
+            set_lines.append(f"{_type} {atom_string} {value}")
+            noted = getattr(self, "_noted_in_ring", set())
+            self._noted_in_ring = noted
+            if (_type, atom_string) not in noted:
+                noted.add((_type, atom_string))
+                printer.normal(
+                    __(
+                        f"The {_type} of atoms {atom_string} is in a ring, so it "
+                        "cannot be set directly; the optimizer drives it to each "
+                        "value instead.",
+                        indent=self.indent + 4 * " ",
+                    )
+                )
+            return
+        frozen_lines.append(f"{_type} {atom_string}")
+
     def run(self):
         """Run a Energy Scan step.
 
@@ -794,8 +855,11 @@ class EnergyScan(seamm.Node):
 
             label = []
             pts = []
-            constraint_text = []
-            constraint_text.append("$freeze")
+            # Coordinates set here and held by geomeTRIC ($freeze), and those
+            # geomeTRIC must drive to their values itself ($set): angles and
+            # dihedrals in rings, which RDKit cannot set
+            frozen_lines = []
+            set_lines = []
             for scan in scans:
                 _type = data["scans"][scan]["type"]
                 _atoms = data["scans"][scan]["atoms"]
@@ -813,30 +877,9 @@ class EnergyScan(seamm.Node):
                 label.append(f"{scan} {pt_label}")
                 table[scan].append(_point)
 
-                atom_string = " ".join([str(at + 1) for at in _atoms])
-                constraint_text.append(f"{_type} {atom_string}")
-
-                if _type == "distance":
-                    iat, jat = _atoms
-                    try:
-                        rdkit.Chem.rdMolTransforms.SetBondLength(
-                            rdkConf, iat, jat, _point
-                        )
-                    except ValueError:
-                        rdkMol.AddBond(iat, jat, rdkit.Chem.BondType.SINGLE)
-                        rdkit.Chem.rdMolTransforms.SetBondLength(
-                            rdkConf, iat, jat, _point
-                        )
-                elif _type == "angle":
-                    iat, jat, kat = _atoms
-                    rdkit.Chem.rdMolTransforms.SetAngleDeg(
-                        rdkConf, iat, jat, kat, _point
-                    )
-                elif _type == "dihedral":
-                    iat, jat, kat, lat = _atoms
-                    rdkit.Chem.rdMolTransforms.SetDihedralDeg(
-                        rdkConf, iat, jat, kat, lat, _point
-                    )
+                self._set_coordinate(
+                    rdkMol, rdkConf, _type, _atoms, _point, frozen_lines, set_lines
+                )
             for frozen in data["freeze"].keys():
                 _type = data["freeze"][frozen]["type"]
                 _atoms = data["freeze"][frozen]["atoms"]
@@ -844,25 +887,19 @@ class EnergyScan(seamm.Node):
 
                 self.logger.info(f" freeze{_value=}")
 
-                atom_string = " ".join([str(at + 1) for at in _atoms])
-                constraint_text.append(f"{_type} {atom_string}")
+                if _value == "current":
+                    atom_string = " ".join([str(at + 1) for at in _atoms])
+                    frozen_lines.append(f"{_type} {atom_string}")
+                else:
+                    self._set_coordinate(
+                        rdkMol, rdkConf, _type, _atoms, _value, frozen_lines, set_lines
+                    )
 
-                if _value != "current":
-                    if _type == "distance":
-                        iat, jat = _atoms
-                        rdkit.Chem.rdMolTransforms.SetBondLength(
-                            rdkConf, iat, jat, _value
-                        )
-                    elif _type == "angle":
-                        iat, jat, kat = _atoms
-                        rdkit.Chem.rdMolTransforms.SetAngleDeg(
-                            rdkConf, iat, jat, kat, _value
-                        )
-                    elif _type == "dihedral":
-                        iat, jat, kat, lat = _atoms
-                        rdkit.Chem.rdMolTransforms.SetDihedralDeg(
-                            rdkConf, iat, jat, kat, lat, _value
-                        )
+            constraint_text = []
+            if len(frozen_lines) > 0:
+                constraint_text.extend(["$freeze", *frozen_lines])
+            if len(set_lines) > 0:
+                constraint_text.extend(["$set", *set_lines])
 
             # Make a directory, ensuring that it is new
             tmp = 1
