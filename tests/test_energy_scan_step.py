@@ -3,6 +3,7 @@
 
 """Tests for `energy_scan_step` package."""
 
+import numpy as np
 import pytest  # noqa: F401
 import energy_scan_step  # noqa: F401
 
@@ -72,3 +73,39 @@ def test_dihedral_in_a_chain_is_set_and_frozen():
     node._set_coordinate(mol, conf, "dihedral", [0, 1, 2, 3], 60.0, frozen, to_set)
     assert to_set == [] and frozen == ["dihedral 1 2 3 4"]
     assert abs(rdMolTransforms.GetDihedralDeg(conf, 0, 1, 2, 3) - 60.0) < 1e-6
+
+
+# ---- a resumed scan reuses the points an earlier run finished ----------------------
+
+
+def test_point_record_round_trip(tmp_path):
+    from energy_scan_step.energy_scan import _save_point, _saved_point
+
+    symbols = ["O", "H", "H"]
+    start = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
+    optimized = start * 1.01
+    constraints = ["$freeze", "dihedral 1 2 3 4"]
+    _save_point(
+        tmp_path, constraints, symbols, start, -123.4, optimized, True, 7, {"S**2": 0.0}
+    )
+    saved = _saved_point(tmp_path, constraints, symbols, start)
+    assert saved["energy"] == -123.4
+    assert saved["steps"] == 7 and saved["converged"] is True
+    assert np.allclose(saved["coordinates"], optimized)
+    assert saved["results"] == {"S**2": 0.0}
+
+
+def test_point_record_must_match(tmp_path):
+    """Never reuse a point from a different calculation."""
+    from energy_scan_step.energy_scan import POINT_FILE, _save_point, _saved_point
+
+    symbols = ["O", "H", "H"]
+    start = np.zeros((3, 3))
+    constraints = ["$freeze", "distance 1 2"]
+    _save_point(tmp_path, constraints, symbols, start, -1.0, start, True, 1, {})
+    assert _saved_point(tmp_path, ["$set", "distance 1 2 1.0"], symbols, start) is None
+    assert _saved_point(tmp_path, constraints, ["S", "H", "H"], start) is None
+    assert _saved_point(tmp_path, constraints, symbols, start + 0.01) is None
+    assert _saved_point(tmp_path / "missing", constraints, symbols, start) is None
+    (tmp_path / POINT_FILE).write_text("{not json")
+    assert _saved_point(tmp_path, constraints, symbols, start) is None
