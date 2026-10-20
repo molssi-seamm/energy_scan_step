@@ -64,6 +64,80 @@ class cd:
         os.chdir(self.savedPath)
 
 
+#: The record of a finished scan point, in its directory
+POINT_FILE = "point.json"
+
+
+def _saved_point(path, constraints, symbols, start):
+    """The record of a point an earlier run finished, or None.
+
+    The record is used only if it was made for the same constraints, atoms and
+    starting geometry, so a point is never taken from a different calculation. On a
+    resume each point starts as before: the first from the same structure, the
+    others from the previous point's optimized geometry.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The point's directory.
+    constraints : [str]
+        The point's geomeTRIC constraints.
+    symbols : [str]
+        The element of each atom.
+    start : numpy.ndarray(n, 3)
+        The coordinates the optimization starts from, Å.
+
+    Returns
+    -------
+    dict or None
+        The energy (kJ/mol), optimized coordinates (Å), whether the optimization
+        converged, its steps, and any spin results.
+    """
+    try:
+        data = json.loads((Path(path) / POINT_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+    if data.get("constraints") != list(constraints) or data.get("symbols") != list(
+        symbols
+    ):
+        return None
+    coordinates = data.get("coordinates")
+    if (
+        not isinstance(coordinates, list)
+        or len(coordinates) != len(symbols)
+        or data.get("energy") is None
+    ):
+        return None
+    try:
+        before = np.asarray(data["start"], dtype=float).reshape(-1, 3)
+        now = np.asarray(start, dtype=float).reshape(-1, 3)
+        if before.shape != now.shape or np.abs(before - now).max() > 1.0e-4:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return data
+
+
+def _save_point(
+    path, constraints, symbols, start, energy, coordinates, converged, steps, results
+):
+    """Record a finished point in its directory (see :func:`_saved_point`)."""
+    data = {
+        "constraints": list(constraints),
+        "symbols": list(symbols),
+        "start": np.asarray(start, dtype=float).reshape(-1, 3).tolist(),
+        "energy": float(energy),
+        "coordinates": np.asarray(coordinates, dtype=float).reshape(-1, 3).tolist(),
+        "converged": bool(converged),
+        "steps": int(steps),
+        "results": {k: float(v) for k, v in results.items()},
+    }
+    path = Path(path)
+    tmp = path / (POINT_FILE + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path / POINT_FILE)
+
+
 class SEAMMEngine(geometric.engine.Engine):
     """Helper class that is a geomeTRIC engine and connects to SEAMM."""
 
@@ -833,6 +907,8 @@ class EnergyScan(seamm.Node):
         table["Energy"] = []
 
         all_data = {}
+        symbols = list(starting_configuration.atoms.symbols)
+        n_reused = 0
 
         # Loop over all the scans, incrementing each in turn
         finished = False
@@ -901,15 +977,22 @@ class EnergyScan(seamm.Node):
             if len(set_lines) > 0:
                 constraint_text.extend(["$set", *set_lines])
 
-            # Make a directory, ensuring that it is new
-            tmp = 1
+            # The point's directory. A point finished by an earlier run of this
+            # step (a resumed or resubmitted job) is reused; one it did not finish
+            # is set aside, keeping its output, and run again.
             path = directory / "__".join(label)
-            while path.exists():
-                tmp += 1
-                path = directory / ("__".join(label) + f" {tmp}")
+            start = np.array(rdkConf.GetPositions())
+            saved = _saved_point(path, constraint_text, symbols, start)
+            if saved is None and path.exists():
+                k = 1
+                while path.with_name(f"{path.name}.incomplete-{k}").exists():
+                    k += 1
+                path.rename(path.with_name(f"{path.name}.incomplete-{k}"))
+            if saved is not None:
+                n_reused += 1
 
             self._working_directory = path
-            self.working_directory.mkdir(parents=True, exist_ok=False)
+            self.working_directory.mkdir(parents=True, exist_ok=True)
 
             label = " @ ".join(label)
 
@@ -938,116 +1021,124 @@ class EnergyScan(seamm.Node):
                     )
                 self.logger.debug(self.working_configuration.bonds)
 
-            coordinates = self.working_configuration.atoms.get_coordinates(
-                fractionals=False, as_array=True
-            )
+            if saved is None:
+                coordinates = self.working_configuration.atoms.get_coordinates(
+                    fractionals=False, as_array=True
+                )
 
-            geoMol = geometric.molecule.Molecule()
-            geoMol.elem = self.working_configuration.atoms.symbols
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug("coordinates")
-                for i in range(n_atoms):
-                    self.logger.debug(
-                        f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
-                        f"{coordinates[i][2]:8.3f}"
-                    )
+                geoMol = geometric.molecule.Molecule()
+                geoMol.elem = self.working_configuration.atoms.symbols
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("coordinates")
+                    for i in range(n_atoms):
+                        self.logger.debug(
+                            f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
+                            f"{coordinates[i][2]:8.3f}"
+                        )
 
-            geoMol.xyzs = [coordinates]
+                geoMol.xyzs = [coordinates]
 
-            customengine = SEAMMEngine(self, geoMol)
+                customengine = SEAMMEngine(self, geoMol)
 
-            coordsys = P["coordinate system"].split(":")[0].lower()
+                coordsys = P["coordinate system"].split(":")[0].lower()
 
-            if P["max steps"] == "default":
-                max_steps = 12 * self.working_configuration.n_atoms
+                if P["max steps"] == "default":
+                    max_steps = 12 * self.working_configuration.n_atoms
+                else:
+                    max_steps = P["max steps"]
+
+                enforce = P["enforce"]
+                units = str(enforce.u)
+                if units == "deg":
+                    enforce_value = enforce.m_as("radians")
+                else:
+                    enforce_value = enforce.m_as("bohr")
+
+                kwargs = {
+                    "coordsys": coordsys,
+                    "maxiter": max_steps,
+                    "enforce": enforce_value,
+                }
+
+                constraints_path = self.working_directory / "constraints.txt"
+                constraints_path.write_text("\n".join(constraint_text))
+
+                self.step = 0
+                logPath = self.working_directory / "geomeTRIC.out"
+                logIni = self.working_directory / "log.ini"
+                logIni.write_text(f"""\
+    # The default logging configuration file for geomeTRIC
+    # Modified to write to {logPath}
+
+    [loggers]
+    keys=root
+
+    [handlers]
+    keys=file_handler
+
+    [formatters]
+    keys=formatter
+
+    [logger_root]
+    level=INFO
+    handlers=file_handler
+
+    [handler_file_handler]
+    class=geometric.nifty.RawFileHandler
+    level=INFO
+    formatter=formatter
+    args=("{logPath}",)
+
+    [formatter_formatter]
+    format=%(message)s
+    #format=%(asctime)s %(name)-12s %(levelname)-8s %(message)s
+    """)
+                cc_logger = logging.getLogger("cclib")
+                cc_logger.setLevel(logging.WARNING)
+
+                converged = True
+                with cd(self.working_directory):
+                    try:
+                        m = geometric.optimize.run_optimizer(
+                            logIni=str(logIni),
+                            customengine=customengine,
+                            input="optimization.txt",
+                            constraints=str(constraints_path),
+                            qdata=True,
+                            **kwargs,
+                        )
+                    except geometric.errors.GeomOptNotConvergedError:
+                        converged = False
+
+                # Make the geometric output readable: remove the ANSI escapes
+                if logPath.exists():
+                    text = logPath.read_text()
+                    text = ansi_escape.sub("", text)
+                    logPath.write_text(text)
+
+                # Get the optimized energy & geometry
+                if converged:
+                    energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
+                    coordinates = m.xyzs[-1].reshape(-1, 3)
+                else:
+                    # or the last...
+                    energy = customengine.energy * Q_(1.0, "E_h").to("kJ/mol").magnitude
+                    coordinates = customengine.xyz
+
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("optimized coordinates")
+                    for i in range(n_atoms):
+                        self.logger.debug(
+                            f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
+                            f"{coordinates[i][2]:8.3f}"
+                        )
+                results = customengine.results
             else:
-                max_steps = P["max steps"]
-
-            enforce = P["enforce"]
-            units = str(enforce.u)
-            if units == "deg":
-                enforce_value = enforce.m_as("radians")
-            else:
-                enforce_value = enforce.m_as("bohr")
-
-            kwargs = {
-                "coordsys": coordsys,
-                "maxiter": max_steps,
-                "enforce": enforce_value,
-            }
-
-            constraints_path = self.working_directory / "constraints.txt"
-            constraints_path.write_text("\n".join(constraint_text))
-
-            self.step = 0
-            logPath = self.working_directory / "geomeTRIC.out"
-            logIni = self.working_directory / "log.ini"
-            logIni.write_text(f"""\
-# The default logging configuration file for geomeTRIC
-# Modified to write to {logPath}
-
-[loggers]
-keys=root
-
-[handlers]
-keys=file_handler
-
-[formatters]
-keys=formatter
-
-[logger_root]
-level=INFO
-handlers=file_handler
-
-[handler_file_handler]
-class=geometric.nifty.RawFileHandler
-level=INFO
-formatter=formatter
-args=("{logPath}",)
-
-[formatter_formatter]
-format=%(message)s
-#format=%(asctime)s %(name)-12s %(levelname)-8s %(message)s
-""")
-            cc_logger = logging.getLogger("cclib")
-            cc_logger.setLevel(logging.WARNING)
-
-            converged = True
-            with cd(self.working_directory):
-                try:
-                    m = geometric.optimize.run_optimizer(
-                        logIni=str(logIni),
-                        customengine=customengine,
-                        input="optimization.txt",
-                        constraints=str(constraints_path),
-                        qdata=True,
-                        **kwargs,
-                    )
-                except geometric.errors.GeomOptNotConvergedError:
-                    converged = False
-
-            # Make the geometric output readable by removing the ANSI escape sequences
-            if logPath.exists():
-                text = logPath.read_text()
-                text = ansi_escape.sub("", text)
-                logPath.write_text(text)
-
-            # Get the optimized energy & geometry
-            if converged:
-                energy = m.qm_energies[-1] * Q_(1.0, "E_h").to("kJ/mol").magnitude
-                coordinates = m.xyzs[-1].reshape(-1, 3)
-            else:
-                # or the last...
-                energy = customengine.energy * Q_(1.0, "E_h").to("kJ/mol").magnitude
-                coordinates = customengine.xyz
-
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug("optimized coordinates")
-                for i in range(n_atoms):
-                    self.logger.debug(
-                        f"   {coordinates[i][0]:8.3f} {coordinates[i][1]:8.3f} "
-                        f"{coordinates[i][2]:8.3f}"
-                    )
+                energy = saved["energy"]
+                coordinates = np.array(saved["coordinates"], dtype=float)
+                converged = saved["converged"]
+                self.step = saved["steps"]
+                results = saved.get("results", {})
 
             # Set the coordinates in the configuration
             self.working_configuration.atoms.set_coordinates(
@@ -1062,18 +1153,34 @@ format=%(message)s
 
             # Spin info from quantum calculations
             for key in ("S**2", "S**2 after annihilation"):
-                if key in customengine.results:
-                    all_data[tuple(pts)][key] = customengine.results[key]
+                if key in results:
+                    all_data[tuple(pts)][key] = results[key]
                     if key not in table:
                         table[key] = []
-                    table[key].append(f"{customengine.results[key]:.4f}")
+                    table[key].append(f"{results[key]:.4f}")
                 elif key in table:
                     # Gaussian seems not to output S**2 if exactly zero...
                     all_data[tuple(pts)][key] = 0.0
                     table[key].append("0.0000")
 
-            table["Steps"].append(self.step)
+            table["Steps"].append(self.step if saved is None else f"{self.step}*")
             table["Energy"].append(f"{energy:.6f}")
+            if saved is None:
+                _save_point(
+                    path,
+                    constraint_text,
+                    symbols,
+                    start,
+                    energy,
+                    coordinates,
+                    converged,
+                    self.step,
+                    {
+                        k: results[k]
+                        for k in ("S**2", "S**2 after annihilation")
+                        if k in results
+                    },
+                )
 
             tmp = tabulate(
                 table,
@@ -1130,6 +1237,15 @@ format=%(message)s
                 self.logger.info("")
 
         printer.important(footer)
+        if n_reused > 0:
+            printer.important(
+                __(
+                    f"{n_reused} of the points (Steps marked *) were finished by an "
+                    "earlier run of this step and were reused.",
+                    indent=self.indent + 4 * " ",
+                )
+            )
+            printer.important("")
 
         # Output all the tables and graphs
         # Sort the points ...

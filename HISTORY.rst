@@ -1,6 +1,16 @@
 =======
 History
 =======
+2026.10.20 -- A resumed scan picks up where it stopped
+    * A scan run again in the same job -- resumed, or resubmitted after it ran out of
+      time -- started over from its first point in new directories ('... 2'). Each
+      finished point is now recorded in its directory (point.json: the energy, the
+      optimized geometry and how the optimization went), and a point an earlier
+      run finished is reused when its constraints, atoms and starting geometry are
+      the same, so the scan continues as if it had not stopped. The point that was
+      running when the job stopped is set aside ('... .incomplete-1'), keeping its
+      output, and run again. The table marks the reused points.
+
 2026.10.19 -- Bugfix: scanning a dihedral or angle in a ring
     * A dihedral or angle about a bond in a ring, such as the pucker of ethylene
       carbonate, could not be scanned or fixed: RDKit cannot set it, and the scan
