@@ -1,6 +1,11 @@
 =======
 History
 =======
+2026.10.21 -- Bugfix: no duplicate structures when a scan resumes
+    * When a job resumed a scan, each point an earlier run had reached got a second
+      configuration in the database. The configuration the earlier run made for the
+      point is now reused.
+
 2026.10.20 -- A resumed scan picks up where it stopped
     * A scan run again in the same job -- resumed, or resubmitted after it ran out of
       time -- started over from its first point in new directories ('... 2'). Each
