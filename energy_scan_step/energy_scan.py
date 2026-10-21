@@ -983,7 +983,8 @@ class EnergyScan(seamm.Node):
             path = directory / "__".join(label)
             start = np.array(rdkConf.GetPositions())
             saved = _saved_point(path, constraint_text, symbols, start)
-            if saved is None and path.exists():
+            earlier = path.exists()
+            if saved is None and earlier:
                 k = 1
                 while path.with_name(f"{path.name}.incomplete-{k}").exists():
                     k += 1
@@ -996,14 +997,20 @@ class EnergyScan(seamm.Node):
 
             label = " @ ".join(label)
 
-            # Create a new configuration for this scan
+            # Create a new configuration for this scan point -- unless an earlier
+            # run of this step reached the point and so made it already, when it is
+            # reused rather than duplicated.
             # closest = self._find_closest_configuration(pts, sorted_points, all_data)
 
-            _, self._working_configuration = self.get_system_configuration(
-                P={
-                    "structure handling": "Create a new configuration",
-                },
-            )
+            cid = system.get_configuration_id(label, errors=False) if earlier else None
+            if cid is not None:
+                self._working_configuration = system.get_configuration(cid)
+            else:
+                _, self._working_configuration = self.get_system_configuration(
+                    P={
+                        "structure handling": "Create a new configuration",
+                    },
+                )
             system.configuration = self.working_configuration
             self._working_configuration.name = label
 
